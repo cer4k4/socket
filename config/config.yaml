@@ -1,0 +1,25 @@
+rabbitmq:
+  user: admin
+  pass: admin
+  host: 206.81.26.50
+  port: 5672
+  queues:
+    consumer: profitEvent
+    producer: dbEventQueue
+
+scylladb:
+  user: pineyewss
+  pass: your_password
+  host: localhost
+  port: 9042
+  keyspace: pineyewss
+
+server:
+  host: loalhost
+  socket_port: 8083
+  http_port: 8081
+
+redis:
+  host: localhost
+  port: 6379
+  pass: ""
