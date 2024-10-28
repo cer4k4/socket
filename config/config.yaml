@@ -4,7 +4,7 @@ rabbitmq:
   host: 206.81.26.50
   port: 5672
   queues:
-    consumer: profitEvent
+    consumer: profitEventDev
     producer: dbEventQueue
 
 scylladb:
@@ -15,8 +15,8 @@ scylladb:
   keyspace: pineyewss
 
 server:
-  host: loalhost
-  socket_port: 8083
+  host: localhost
+  socket_port: 5000
   http_port: 8081
 
 redis:

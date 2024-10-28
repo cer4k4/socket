@@ -7,4 +7,5 @@ import (
 type MessageScyllaRepository interface {
 	SaveMessage(data domain.Data) error
 	DeleteMessage(data domain.Data) error
+	FetchMessagesFromDB(chatId string) []domain.Data
 }

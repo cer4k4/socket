@@ -1,6 +1,7 @@
 package migrations
 
 import (
+	"fmt"
 	"log"
 	"sort"
 
@@ -37,18 +38,24 @@ func RunMigrations(session *gocql.Session) {
 
 	// Execute new migrations
 	files, err := func() ([]fs.FileInfo, error) {
-		f, err := os.Open("database/scylla/migrations")
+		// Use the directory path, not the file path
+		dirPath := "/home/aka/Templates/simple_socket/database/scylla/migrations"
+
+		f, err := os.Open(dirPath)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error opening directory: %v", err)
 		}
+		defer f.Close()
+
 		list, err := f.Readdir(-1)
-		f.Close()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error reading directory: %v", err)
 		}
-		slices.SortFunc(list, func(a, b os.FileInfo) int {
+
+		slices.SortFunc(list, func(a, b fs.FileInfo) int {
 			return strings.Compare(a.Name(), b.Name())
 		})
+
 		return list, nil
 	}()
 	if err != nil {
@@ -64,7 +71,7 @@ func RunMigrations(session *gocql.Session) {
 			continue // Migration already applied
 		}
 
-		content, err := os.ReadFile("database/scylla/migrations/" + file.Name())
+		content, err := os.ReadFile("/home/aka/Templates/simple_socket/database/scylla/migrations/001_create_messages_table.cql")
 		if err != nil {
 			log.Fatalf("Error reading migration file %s: %v", file.Name(), err)
 		}

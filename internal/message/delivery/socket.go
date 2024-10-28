@@ -4,26 +4,47 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
+	"strconv"
 
 	socketio "github.com/googollee/go-socket.io"
 
+	"pineywss/config"
 	"pineywss/internal/message/domain"
 	"pineywss/internal/message/usecase"
 )
 
-func MessageSocketHandler(messageUseCase usecase.MessageService) {
+func MessageSocketHandler(cfgRedis config.RedisConfig, cfgrabbitMQ config.RabbitMQConfig, socketPort string, messageUseCase usecase.MessageService) {
+	// Create a websocket transport with a custom CheckOrigin function
+
 	server := socketio.NewServer(nil)
+	_, _ = server.Adapter(&socketio.RedisAdapterOptions{
+		Host:     cfgRedis.Host,
+		Port:     strconv.Itoa(cfgRedis.Port),
+		Password: cfgRedis.Pass,
+	})
 
 	server.OnConnect("/", func(s socketio.Conn) error {
+		query := s.URL().RawQuery
+		values, _ := url.ParseQuery(query)
+		chatId := values.Get("chatId")
+		s.Join(chatId)
+		if err := messageUseCase.SetOnline(chatId); err != nil {
+			log.Println(err)
+		}
 		fmt.Printf("Client connected: %s\n", s.ID())
 		return nil
 	})
-
-	server.OnEvent("/", "client_message", func(s socketio.Conn, msg domain.Message) {
-		fmt.Printf("Received from client: %s\n", msg.Data)
-		queueName := "profitEvent"
-		if queueName == "" {
-			log.Fatal("CONSUMER_QUEUE environment variable not set")
+	server.OnEvent("/", "client_message", func(s socketio.Conn, msg domain.Data) {
+		rooms := s.Rooms()
+		for r := range rooms {
+			if messages, err := messageUseCase.ProfitToSocket(cfgrabbitMQ.Queues.Consumer, cfgrabbitMQ.Queues.Producer, rooms[r]); err != nil {
+				log.Println(err)
+			} else {
+				for i := range messages {
+					s.Emit("server_message", messages[i])
+				}
+			}
 		}
 	})
 	server.OnError("/", func(s socketio.Conn, e error) {
@@ -31,7 +52,11 @@ func MessageSocketHandler(messageUseCase usecase.MessageService) {
 	})
 
 	server.OnDisconnect("/", func(s socketio.Conn, reason string) {
-		fmt.Println("Client disconnected:", reason)
+		query := s.URL().RawQuery
+		values, _ := url.ParseQuery(query)
+		chatId := values.Get("chatId")
+		err := messageUseCase.DisconnectFromSocket(chatId)
+		fmt.Println("Client disconnected:", reason, err)
 	})
 
 	go server.Serve()
@@ -50,4 +75,6 @@ func MessageSocketHandler(messageUseCase usecase.MessageService) {
 		server.ServeHTTP(w, r)
 	})
 
+	fmt.Printf("Server running on port %s...\n", socketPort)
+	log.Fatal(http.ListenAndServe(socketPort, nil))
 }

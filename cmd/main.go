@@ -1,9 +1,7 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"net/http"
 	"pineywss/config" // Replace with your actual package path
 	"pineywss/database/scylla/migrations"
 	"pineywss/internal/message/delivery"
@@ -24,10 +22,6 @@ func main() {
 	rabitConn, rabbitChannel := cfg.GetRabbitMQ()
 	log.Println("RabbitMQ URL:", &rabitConn, rabbitChannel)
 
-	// Get consumer queue name
-	consumerQueue := cfg.RabbitMQ.Queues.Consumer
-	log.Printf("Consumer Queue: %s", consumerQueue)
-
 	// ScyllaDB connection info
 	scyllaHosts := cfg.GetScyllaDBHosts()
 	log.Printf("ScyllaDB Hosts: %v", scyllaHosts)
@@ -40,12 +34,11 @@ func main() {
 	// Server Host & Port
 
 	_, socketPort := cfg.GetServerAddress()
-	log.Fatal(http.ListenAndServe(socketPort, nil))
-	fmt.Printf("Server running on port %s...\n", socketPort)
+
 	messageRabbitmqRepository := rabbitmq.NewMessageRabbitMQRepository(rabbitChannel)
 	messageScyllaRepository := scylla.NewMessageScyllaRepository(scyllaHosts)
 	messageRedisRepository := redis.NewMessageRedisRepository(redisClient)
 	messageService := usecase.NewMessageService(messageRabbitmqRepository, messageScyllaRepository, messageRedisRepository)
-	delivery.MessageSocketHandler(messageService)
+	delivery.MessageSocketHandler(cfg.Redis, cfg.RabbitMQ, socketPort, messageService)
 
 }

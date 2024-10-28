@@ -1,0 +1,14 @@
+{
+    "sqltools.connections": [
+        {
+            "server": "localhost",
+            "port": 9042,
+            "previewLimit": 50,
+            "driver": "Scylla",
+            "name": "admin",
+            "username": "pineyewss",
+            "password": "your_password",
+            "database": "pineyewss"
+        }
+    ]
+}
