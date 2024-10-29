@@ -16,8 +16,11 @@ func NewMessageRedisRepository(redisClient *redis.Client) MessageRedisRepository
 }
 
 func (mr *messageRedis) GetRoomStatus(chatRoomId string) (string, error) {
-	isOnline, err := mr.redisClient.Get(context.Background(), "user:"+chatRoomId+":online").Result()
-	return isOnline, err
+	isOnline, _ := mr.redisClient.Get(context.Background(), "user:"+chatRoomId+":online").Result()
+	// if err != nil {
+	// 	log.Printf("Error geting online status for user %s in Redis: %v", chatRoomId, err)
+	// }
+	return isOnline, nil
 }
 
 func (mr *messageRedis) SetRoomStatus(chatroomid string) error {
@@ -26,7 +29,7 @@ func (mr *messageRedis) SetRoomStatus(chatroomid string) error {
 		log.Printf("Error setting online status for user %s in Redis: %v", chatroomid, err)
 		return err
 	}
-	return nil
+	return redis.Nil
 }
 
 func (mr *messageRedis) Disconnect(chatroomid string) error {

@@ -14,9 +14,13 @@ import (
 	"pineywss/internal/message/usecase"
 )
 
-func MessageSocketHandler(cfgRedis config.RedisConfig, cfgrabbitMQ config.RabbitMQConfig, socketPort string, messageUseCase usecase.MessageService) {
+func SocketServer(cfgRedis config.RedisConfig, cfgrabbitMQ config.RabbitMQConfig, socketPort string, messageUseCase usecase.MessageService) {
 	// Create a websocket transport with a custom CheckOrigin function
-
+	err := messageUseCase.PublishRandomChatRoomToRabbitMQ(cfgrabbitMQ.Queues.Consumer)
+	if err != nil {
+		log.Println(err)
+	}
+	messageUseCase.GiveMessagesFromRabbit(cfgrabbitMQ.Queues.Consumer)
 	server := socketio.NewServer(nil)
 	_, _ = server.Adapter(&socketio.RedisAdapterOptions{
 		Host:     cfgRedis.Host,
@@ -28,6 +32,7 @@ func MessageSocketHandler(cfgRedis config.RedisConfig, cfgrabbitMQ config.Rabbit
 		query := s.URL().RawQuery
 		values, _ := url.ParseQuery(query)
 		chatId := values.Get("chatId")
+		s.Leave(s.ID())
 		s.Join(chatId)
 		if err := messageUseCase.SetOnline(chatId); err != nil {
 			log.Println(err)
@@ -38,15 +43,17 @@ func MessageSocketHandler(cfgRedis config.RedisConfig, cfgrabbitMQ config.Rabbit
 	server.OnEvent("/", "client_message", func(s socketio.Conn, msg domain.Data) {
 		rooms := s.Rooms()
 		for r := range rooms {
-			if messages, err := messageUseCase.ProfitToSocket(cfgrabbitMQ.Queues.Consumer, cfgrabbitMQ.Queues.Producer, rooms[r]); err != nil {
+
+			messages, err := messageUseCase.SendProfitToSocket(rooms[r])
+			if err != nil {
 				log.Println(err)
-			} else {
-				for i := range messages {
-					s.Emit("server_message", messages[i])
-				}
+			}
+			for i := range messages {
+				s.Emit("server_message", messages[i])
 			}
 		}
 	})
+
 	server.OnError("/", func(s socketio.Conn, e error) {
 		fmt.Println("Error:", e)
 	})
