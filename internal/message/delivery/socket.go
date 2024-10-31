@@ -16,18 +16,19 @@ import (
 
 func SocketServer(cfgRedis config.RedisConfig, cfgrabbitMQ config.RabbitMQConfig, socketPort string, messageUseCase usecase.MessageService) {
 	// Create a websocket transport with a custom CheckOrigin function
-	err := messageUseCase.PublishRandomChatRoomToRabbitMQ(cfgrabbitMQ.Queues.Consumer)
-	if err != nil {
-		log.Println(err)
-	}
-	messageUseCase.GiveMessagesFromRabbit(cfgrabbitMQ.Queues.Consumer)
+	// err := messageUseCase.PublishRandomChatRoomToRabbitMQ(cfgrabbitMQ.Queues.Consumer)
+	// if err != nil {
+	// 	log.Println(err)
+	// }
+
 	server := socketio.NewServer(nil)
 	_, _ = server.Adapter(&socketio.RedisAdapterOptions{
 		Host:     cfgRedis.Host,
 		Port:     strconv.Itoa(cfgRedis.Port),
 		Password: cfgRedis.Pass,
 	})
-
+	log.Println("Online Rooms", server.Rooms("/"))
+	messageUseCase.RunConsumer(cfgrabbitMQ.Queues.Producer, cfgrabbitMQ.Queues.Consumer, server)
 	server.OnConnect("/", func(s socketio.Conn) error {
 		query := s.URL().RawQuery
 		values, _ := url.ParseQuery(query)
@@ -37,21 +38,23 @@ func SocketServer(cfgRedis config.RedisConfig, cfgrabbitMQ config.RabbitMQConfig
 		if err := messageUseCase.SetOnline(chatId); err != nil {
 			log.Println(err)
 		}
+		go messageUseCase.GiveOldMessagesFromScyllaDB(cfgrabbitMQ.Queues.Producer, chatId, server)
 		fmt.Printf("Client connected: %s\n", s.ID())
 		return nil
 	})
-	server.OnEvent("/", "client_message", func(s socketio.Conn, msg domain.Data) {
-		rooms := s.Rooms()
-		for r := range rooms {
+	server.OnEvent("/", "client_message", func(s socketio.Conn, msg domain.Entity) {
+		// rooms := s.Rooms()
+		// for r := range rooms {
 
-			messages, err := messageUseCase.SendProfitToSocket(rooms[r])
-			if err != nil {
-				log.Println(err)
-			}
-			for i := range messages {
-				s.Emit("server_message", messages[i])
-			}
-		}
+		// 	messages, err := messageUseCase.SendProfitToSocket(rooms[r])
+		// 	if err != nil {
+		// 		log.Println(err)
+		// 	}
+		// 	for i := range messages {
+		// 		log.Println("On clinet_message event")
+		// 		s.Emit("server_message", messages[i])
+		// 	}
+		// }
 	})
 
 	server.OnError("/", func(s socketio.Conn, e error) {

@@ -10,46 +10,47 @@ import (
 	"pineywss/internal/message/repository/redis"
 	"pineywss/internal/message/repository/scylla"
 	"strconv"
+
+	socketio "github.com/googollee/go-socket.io"
 )
 
 type messageService struct {
 	rabbitRepository   rabbitmq.MessageRabbitMQRepository
 	scylladbRepository scylla.MessageScyllaRepository
 	redisRepository    redis.MessageRedisRepository
-	chanData           chan domain.Data
 }
 
-func NewMessageService(rabbitRepository rabbitmq.MessageRabbitMQRepository, scylladbRepository scylla.MessageScyllaRepository, redisRepository redis.MessageRedisRepository, chanData chan domain.Data) MessageService {
-	return &messageService{rabbitRepository, scylladbRepository, redisRepository, chanData}
+func NewMessageService(rabbitRepository rabbitmq.MessageRabbitMQRepository, scylladbRepository scylla.MessageScyllaRepository, redisRepository redis.MessageRedisRepository) MessageService {
+	return &messageService{rabbitRepository, scylladbRepository, redisRepository}
 }
 
-func (ms *messageService) SendProfitToSocket(chatroomid string) (result []domain.Data, err error) {
-	// Old Messages
-	oldMessage := ms.scylladbRepository.FetchMessagesFromDB(chatroomid)
-	for i := range oldMessage {
-		result = append(result, oldMessage[i])
-		err = ms.scylladbRepository.DeleteMessage(oldMessage[i])
-		if err != nil {
-			return []domain.Data{}, err
-		}
-	}
+// func (ms *messageService) SendProfitToSocket(chatroomid string) (result []domain.Message, err error) {
+// 	// Old Messages
+// 	oldMessage := ms.scylladbRepository.FetchMessagesFromDB(chatroomid)
+// 	for i := range oldMessage {
+// 		result = append(result, oldMessage[i])
+// 		err = ms.scylladbRepository.DeleteMessage(oldMessage[i])
+// 		if err != nil {
+// 			return []domain.Message{}, err
+// 		}
+// 	}
 
-	// New Messages
-	select {
-	case data := <-ms.chanData:
-		intChatId, _ := strconv.Atoi(chatroomid)
-		if int64(intChatId) == data.ChatId {
-			log.Println("New Messafges", data)
-			result = append(result, data)
-			return result, nil
-		}
-	default:
-		return result, nil
-	}
+// 	// New Messages
+// 	select {
+// 	case data := <-ms.chanData:
+// 		intChatId, _ := strconv.Atoi(chatroomid)
+// 		if int64(intChatId) == data.Data.ChatId {
+// 			log.Println("New Messafges", data)
+// 			result = append(result, data)
+// 			return result, nil
+// 		}
+// 	default:
+// 		return result, nil
+// 	}
 
-	return result, err
+// 	return result, err
 
-}
+// }
 
 func (ms *messageService) SetOnline(chatroomid string) (err error) {
 	err = ms.redisRepository.SetRoomStatus(chatroomid)
@@ -73,27 +74,22 @@ func (ms *messageService) PublishRandomChatRoomToRabbitMQ(prodecureQueue string)
 	return err
 }
 
-func (ms *messageService) GiveMessagesFromRabbit(queueName string) {
-	_, listData, err := ms.rabbitRepository.StartConsumer(queueName)
-	log.Println("Messages Count", len(listData))
-	if err != nil {
-		log.Printf("After Give RabbitMQ, %v \n", err)
-	}
-	for l := range listData {
-		strchatid := strconv.Itoa(int(listData[l].ChatId))
-		status, err := ms.redisRepository.GetRoomStatus(strchatid)
+func (ms *messageService) RunConsumer(prodecureQueueName, consumerQueueName string, server *socketio.Server) {
+	ms.rabbitRepository.StartConsumer(prodecureQueueName, consumerQueueName, server)
+}
+
+func (ms *messageService) GiveOldMessagesFromScyllaDB(prodecureQueueName, chatId string, server *socketio.Server) {
+	oldmessageList := ms.scylladbRepository.FetchMessagesFromDB(chatId)
+	for l := range oldmessageList {
+		server.BroadcastToRoom("/", chatId, "server_message", oldmessageList[l])
+		intChatId, _ := strconv.Atoi(chatId)
+		err := ms.scylladbRepository.DeleteMessage(int64(intChatId))
 		if err != nil {
-			log.Printf("Status Redis, %v \n", err)
+			log.Println("err delete db", err)
 		}
-		if status != "true" {
-			err := ms.scylladbRepository.SaveMessage(listData[l])
-			if err != nil {
-				log.Printf("SaveMessage To ScyllaDB, %v \n", err)
-			}
-		} else {
-			log.Printf("Send to Channel From GiveMessagesFromRabbit, %v \n", listData[l])
-			ms.chanData <- listData[l]
-		}
+		byteData, _ := json.Marshal(oldmessageList[l])
+		ms.rabbitRepository.PublishMessage(prodecureQueueName, byteData)
+		log.Println("after Send to Socket offline messages send to dbEventQueue")
 	}
 }
 

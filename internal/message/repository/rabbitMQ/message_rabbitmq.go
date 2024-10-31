@@ -5,22 +5,28 @@ import (
 	"fmt"
 	"log"
 	"pineywss/internal/message/domain"
-	"sync"
-	"time"
+	"pineywss/internal/message/repository/redis"
+	"pineywss/internal/message/repository/scylla"
+	"strconv"
+
+	socketio "github.com/googollee/go-socket.io"
 
 	"github.com/rabbitmq/amqp091-go"
 )
 
 type messageRabbit struct {
-	channel *amqp091.Channel
+	rabbitConn         *amqp091.Connection
+	redisRepository    redis.MessageRedisRepository
+	scylladbRepository scylla.MessageScyllaRepository
 }
 
-func NewMessageRabbitMQRepository(channel *amqp091.Channel) MessageRabbitMQRepository {
-	return &messageRabbit{channel}
+func NewMessageRabbitMQRepository(rabbitConn *amqp091.Connection, redisRepository redis.MessageRedisRepository, scylladbRepository scylla.MessageScyllaRepository) MessageRabbitMQRepository {
+	return &messageRabbit{rabbitConn, redisRepository, scylladbRepository}
 }
 
 func (m *messageRabbit) PublishMessage(queueName string, body []byte) error {
-	_, err := m.channel.QueueDeclare(
+	ch, err := m.rabbitConn.Channel()
+	_, err = ch.QueueDeclare(
 		queueName,
 		true,
 		false,
@@ -33,7 +39,7 @@ func (m *messageRabbit) PublishMessage(queueName string, body []byte) error {
 		return err
 	}
 
-	err = m.channel.Publish(
+	err = ch.Publish(
 		"",
 		queueName,
 		false,
@@ -49,19 +55,15 @@ func (m *messageRabbit) PublishMessage(queueName string, body []byte) error {
 	return err
 }
 
-func (m *messageRabbit) StartConsumer(queueName string) ([]domain.Message, []domain.Data, error) {
-
-	var listMsg []domain.Message
-	var listData []domain.Data
-	var mu sync.Mutex
-
-	if queueName == "" {
-		return nil, nil, fmt.Errorf("CONSUMER_QUEUE environment variable not set")
+func (m *messageRabbit) StartConsumer(prodecureQueueName, consumerqueueName string, server *socketio.Server) {
+	ch, err := m.rabbitConn.Channel()
+	if consumerqueueName == "" {
+		fmt.Printf("CONSUMER_QUEUE environment variable not set")
 	}
 
 	// Declare queue
-	queue, err := m.channel.QueueDeclare(
-		queueName,
+	queue, err := ch.QueueDeclare(
+		consumerqueueName,
 		true,
 		false,
 		false,
@@ -69,26 +71,23 @@ func (m *messageRabbit) StartConsumer(queueName string) ([]domain.Message, []dom
 		nil,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to declare queue %s: %v", queueName, err)
+		fmt.Printf("failed to declare queue %s: %v", consumerqueueName, err)
 	}
 
 	messageCount := queue.Messages
-	if messageCount == 0 {
-		return listMsg, listData, nil
-	}
 
-	err = m.channel.Qos(
+	err = ch.Qos(
 		int(messageCount), // prefetch count - only get existing messages
 		0,                 // prefetch size
 		false,             // global
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to set QoS: %v", err)
+		fmt.Printf("failed to set QoS: %v", err)
 	}
 
 	// Start consuming
-	msgs, err := m.channel.Consume(
-		queueName,
+	msgs, err := ch.Consume(
+		consumerqueueName,
 		"",
 		true,
 		false,
@@ -97,122 +96,55 @@ func (m *messageRabbit) StartConsumer(queueName string) ([]domain.Message, []dom
 		nil,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to register a consumer: %v", err)
+		fmt.Printf("failed to register a consumer: %v", err)
 	}
-	dataChan := make(chan domain.Data, messageCount)
-	done := make(chan bool)
-	processedCount := 0
-	//timeout := time.After(5 * time.Second) // Adjust timeout as needed
-	// Producer goroutine
+	var count int
+	var chMessage = make(chan domain.Message, 1000)
+	var chData = make(chan domain.Data, 1000)
 	go func() {
-		var data domain.Data
-		messageCount := 0
 		for d := range msgs {
-			if err := json.Unmarshal(d.Body, &data); err != nil {
-				log.Printf("Error unmarshaling message: %v", err)
-				d.Nack(false, true)
+			var msg domain.Message
+			if err := json.Unmarshal(d.Body, &msg); err != nil {
+				log.Printf("Error parsing message: %v", err)
 				continue
 			}
-			dataChan <- data
-			d.Ack(false) // Acknowledge message
-			processedCount++
-			messageCount++
-			log.Printf("Processed message %d: %+v", messageCount, data)
-			if processedCount >= int(messageCount) {
-				defer close(dataChan)
-				return
+
+			var data domain.Data
+			if err := json.Unmarshal([]byte(msg.Data), &data); err != nil {
+				log.Printf("Error parsing data: %v", err)
+				continue
+			}
+			log.Println("message", msg, "data", data)
+			if err != nil {
+				log.Println(err)
+			}
+			count++
+			chMessage <- msg
+			chData <- data
+		}
+	}()
+	go func() {
+		for {
+			select {
+			case msg := <-chMessage:
+				data := <-chData
+				stchatroom := strconv.Itoa(int(data.ChatId))
+				statusRoom, _ := m.redisRepository.GetRoomStatus(stchatroom)
+				if statusRoom == "true" {
+					server.BroadcastToRoom("/", stchatroom, "server_message", msg)
+					log.Printf("Online: Send To Room %v \n", data)
+					dataByte, _ := json.Marshal(msg)
+					m.PublishMessage(prodecureQueueName, dataByte)
+					log.Println("send To dbEventQueue")
+				} else {
+					log.Printf("Offline SaveMessage %v %v On Scylla \n", msg, data)
+					m.scylladbRepository.SaveMessage(msg, data)
+				}
+
 			}
 		}
 	}()
-	// Consumer goroutine
-
-	go func() {
-		for data := range dataChan {
-			mu.Lock()
-			listData = append(listData, data)
-			mu.Unlock()
-		}
-		done <- true
-	}()
-	// go func() {
-	// 	for {
-	// 		select {
-	// 		case data := <-dataChan:
-	// 			mu.Lock()
-	// 			listData = append(listData, data)
-	// 			mu.Unlock()
-	// 		case <-timeout:
-	// 			done <- true
-	// 			return
-	// 		}
-	// 	}
-	// }()
-
-	// Wait for completion or timeout
-	select {
-	case <-done:
-		log.Printf("Completed processing. Total messages: %d", len(listData))
-		return listMsg, listData, nil
-	case <-time.After(1 * time.Minute): // Overall timeout
-		log.Println("Consumer timed out")
-		return listMsg, listData, nil
-	}
 }
-
-// timeoutChan := time.After(time.Second)
-// messageCount := 0
-// msgChan := make(chan domain.Message)
-// dataChan := make(chan domain.Data)
-// errorChan := make(chan error)
-// done := make(chan bool)
-
-// // Process messages in goroutine
-// go func() {
-// 	for d := range msgs {
-// 		// var msg domain.Message
-// 		// if err := json.Unmarshal(d.Body, &msg); err != nil {
-// 		// 	errorChan <- fmt.Errorf("error parsing message: %v", err)
-// 		// 	continue
-// 		// }
-
-// 		var data domain.Data
-// 		if err := json.Unmarshal(d.Body, &data); err != nil {
-// 			errorChan <- fmt.Errorf("error parsing data: %v", err)
-// 			continue
-// 		}
-
-// 		//msgChan <- msg
-// 		dataChan <- data
-
-// 		messageCount++
-// 		if messageCount >= maxMessages {
-// 			done <- true
-// 			return
-// 		}
-// 	}
-// }()
-
-// // Collect results
-// for {
-// 	select {
-// 	case <-timeoutChan:
-// 		log.Printf("Timeout reached while consuming messages. Processed %d messages", messageCount)
-// 		return listMsg, listData, nil
-
-// 	case msg := <-msgChan:
-// 		listMsg = append(listMsg, msg)
-
-// 	case data := <-dataChan:
-// 		listData = append(listData, data)
-
-// 	case err := <-errorChan:
-// 		log.Printf("Error while processing message: %v", err)
-
-// 	case <-done:
-// 		log.Printf("Processed %d messages successfully", messageCount)
-// 		return listMsg, listData, nil
-// 	}
-// }
 
 /*	chatIdStr := strconv.FormatInt(data.ChatId, 10)
 
@@ -235,3 +167,65 @@ func (m *messageRabbit) StartConsumer(queueName string) ([]domain.Message, []dom
 
 	PublishMessage(channel, os.Getenv("PRODUCER_QUEUE"), d.Body)
 */
+
+//New Code
+
+// dataChan := make(chan domain.Data, messageCount)
+// done := make(chan bool)
+// processedCount := 0
+// go func() {
+// 	//		rooms := server.Rooms("/")
+// 	var data domain.Data
+// 	messageCount := 0
+// 	for d := range msgs {
+
+// 		if err := json.Unmarshal(d.Body, &data); err != nil {
+// 			log.Printf("Error unmarshaling message: %v", err)
+// 			d.Nack(false, true)
+// 			continue
+// 		}
+// 		server.BroadcastToRoom("/", "6627322", "client_message")
+// 		dataChan <- data
+// 		d.Ack(false) // Acknowledge message
+// 		processedCount++
+// 		messageCount++
+// 		log.Printf("Processed message %d: %+v", messageCount, data)
+// 		if processedCount >= int(messageCount) {
+// 			defer close(dataChan)
+// 			return
+// 		}
+// 	}
+// }()
+// // Consumer goroutine
+
+// go func() {
+// 	for data := range dataChan {
+// 		mu.Lock()
+// 		listData = append(listData, data)
+// 		mu.Unlock()
+// 	}
+// 	done <- true
+// }()
+// // go func() {
+// // 	for {
+// // 		select {
+// // 		case data := <-dataChan:
+// // 			mu.Lock()
+// // 			listData = append(listData, data)
+// // 			mu.Unlock()
+// // 		case <-timeout:
+// // 			done <- true
+// // 			return
+// // 		}
+// // 	}
+// // }()
+
+// // Wait for completion or timeout
+// select {
+// case <-done:
+// 	log.Printf("Completed processing. Total messages: %d", len(listData))
+// 	return listMsg, listData, nil
+// case <-time.After(1 * time.Minute): // Overall timeout
+// 	log.Println("Consumer timed out")
+// 	return listMsg, listData, nil
+// }

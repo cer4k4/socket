@@ -1,7 +1,7 @@
 rabbitmq:
   user: admin
   pass: admin
-  host: 206.81.26.50
+  host: localhost
   port: 5672
   queues:
     consumer: profitEventDev

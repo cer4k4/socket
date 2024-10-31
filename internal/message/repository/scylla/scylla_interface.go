@@ -5,7 +5,7 @@ import (
 )
 
 type MessageScyllaRepository interface {
-	SaveMessage(data domain.Data) error
-	DeleteMessage(data domain.Data) error
-	FetchMessagesFromDB(chatId string) []domain.Data
+	SaveMessage(msg domain.Message, data domain.Data) error
+	DeleteMessage(chatroomid int64) error
+	FetchMessagesFromDB(chatId string) []domain.Message
 }

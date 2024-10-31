@@ -9,6 +9,16 @@
             "username": "pineyewss",
             "password": "your_password",
             "database": "pineyewss"
+        },
+        {
+            "server": "206.81.26.50",
+            "port": 9042,
+            "previewLimit": 50,
+            "driver": "Scylla",
+            "name": "server",
+            "username": "pineyewss",
+            "database": "pineyewss",
+            "password": "12345@Pineye"
         }
     ]
 }

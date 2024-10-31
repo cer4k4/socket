@@ -29,7 +29,7 @@ func (mr *messageRedis) SetRoomStatus(chatroomid string) error {
 		log.Printf("Error setting online status for user %s in Redis: %v", chatroomid, err)
 		return err
 	}
-	return redis.Nil
+	return nil
 }
 
 func (mr *messageRedis) Disconnect(chatroomid string) error {
