@@ -11,7 +11,7 @@ import (
 	"pineywss/internal/message/repository/scylla"
 	"strconv"
 
-	socketio "github.com/googollee/go-socket.io"
+	"github.com/ambelovsky/gosf"
 )
 
 type messageService struct {
@@ -74,14 +74,14 @@ func (ms *messageService) PublishRandomChatRoomToRabbitMQ(prodecureQueue string)
 	return err
 }
 
-func (ms *messageService) RunConsumer(prodecureQueueName, consumerQueueName string, server *socketio.Server) {
-	ms.rabbitRepository.StartConsumer(prodecureQueueName, consumerQueueName, server)
+func (ms *messageService) RunConsumer(prodecureQueueName, consumerQueueName string) {
+	ms.rabbitRepository.StartConsumer(prodecureQueueName, consumerQueueName)
 }
 
-func (ms *messageService) GiveOldMessagesFromScyllaDB(prodecureQueueName, chatId string, server *socketio.Server) {
+func (ms *messageService) GiveOldMessagesFromScyllaDB(prodecureQueueName, chatId string) {
 	oldmessageList := ms.scylladbRepository.FetchMessagesFromDB(chatId)
 	for l := range oldmessageList {
-		server.BroadcastToRoom("/", chatId, "server_message", oldmessageList[l])
+		gosf.Broadcast(chatId, "response", &gosf.Message{Body: gosf.StructToMap(oldmessageList[l])})
 		intChatId, _ := strconv.Atoi(chatId)
 		err := ms.scylladbRepository.DeleteMessage(int64(intChatId))
 		if err != nil {
@@ -89,7 +89,7 @@ func (ms *messageService) GiveOldMessagesFromScyllaDB(prodecureQueueName, chatId
 		}
 		byteData, _ := json.Marshal(oldmessageList[l])
 		ms.rabbitRepository.PublishMessage(prodecureQueueName, byteData)
-		log.Println("after Send to Socket offline messages send to dbEventQueue")
+		log.Println("after Send to Socket offline messages send to dbEventQueue", oldmessageList[l])
 	}
 }
 

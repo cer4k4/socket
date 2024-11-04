@@ -39,7 +39,7 @@ func RunMigrations(session *gocql.Session) {
 	// Execute new migrations
 	files, err := func() ([]fs.FileInfo, error) {
 		// Use the directory path, not the file path
-		dirPath := "/home/aka/Templates/simple_socket/database/scylla/migrations"
+		dirPath := "/home/aka/Templates/socket/database/scylla/migrations"
 
 		f, err := os.Open(dirPath)
 		if err != nil {

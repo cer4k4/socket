@@ -21,7 +21,6 @@ func (ms *messageScylla) SaveMessage(msg domain.Message, data domain.Data) error
 	//return ms.session.Query(query, data.Data.ChatId, data.Data.Profit, data.Data.FailedUpdateAttempts).Exec()
 	query := `INSERT INTO messages (id, entity_type, operation, data, chat_id, profit, failed_update_attempts) VALUES (uuid(), ?, ?, ?, ?, ?, ?);`
 	err := ms.session.Query(query, msg.EntityType, msg.Operation, msg.Data, data.ChatId, data.Profit, data.FailedUpdateAttempts).Exec()
-	log.Println("db layer", err)
 	return err
 }
 

@@ -1,25 +1,25 @@
 rabbitmq:
   user: admin
   pass: admin
-  host: localhost
+  host: 206.81.26.50
   port: 5672
   queues:
     consumer: profitEventDev
-    producer: dbEventQueue
+    producer: dbEventQueueRep
 
 scylladb:
   user: pineyewss
-  pass: your_password
-  host: localhost
+  pass: 12345@Pineye
+  host: 206.81.26.50
   port: 9042
   keyspace: pineyewss
 
 server:
   host: localhost
-  socket_port: 5000
+  socket_port: 8083
   http_port: 8081
 
 redis:
-  host: localhost
+  host: 206.81.26.50
   port: 6379
   pass: ""

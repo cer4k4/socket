@@ -9,7 +9,7 @@ import (
 	"pineywss/internal/message/repository/scylla"
 	"strconv"
 
-	socketio "github.com/googollee/go-socket.io"
+	"github.com/ambelovsky/gosf"
 
 	"github.com/rabbitmq/amqp091-go"
 )
@@ -55,7 +55,7 @@ func (m *messageRabbit) PublishMessage(queueName string, body []byte) error {
 	return err
 }
 
-func (m *messageRabbit) StartConsumer(prodecureQueueName, consumerqueueName string, server *socketio.Server) {
+func (m *messageRabbit) StartConsumer(prodecureQueueName, consumerqueueName string) {
 	ch, err := m.rabbitConn.Channel()
 	if consumerqueueName == "" {
 		fmt.Printf("CONSUMER_QUEUE environment variable not set")
@@ -114,7 +114,7 @@ func (m *messageRabbit) StartConsumer(prodecureQueueName, consumerqueueName stri
 				log.Printf("Error parsing data: %v", err)
 				continue
 			}
-			log.Println("message", msg, "data", data)
+			log.Printf("Counsum From (%v) Queue, Value Of Message %v \n", consumerqueueName, msg)
 			if err != nil {
 				log.Println(err)
 			}
@@ -131,14 +131,17 @@ func (m *messageRabbit) StartConsumer(prodecureQueueName, consumerqueueName stri
 				stchatroom := strconv.Itoa(int(data.ChatId))
 				statusRoom, _ := m.redisRepository.GetRoomStatus(stchatroom)
 				if statusRoom == "true" {
-					server.BroadcastToRoom("/", stchatroom, "server_message", msg)
+					gosf.Broadcast(stchatroom, "response", &gosf.Message{Body: gosf.StructToMap(msg)})
+					//server.BroadcastToRoom("/", stchatroom, "server_message", msg)
 					log.Printf("Online: Send To Room %v \n", data)
 					dataByte, _ := json.Marshal(msg)
 					m.PublishMessage(prodecureQueueName, dataByte)
-					log.Println("send To dbEventQueue")
+					log.Printf("Send To (%v) Queue \n", prodecureQueueName)
 				} else {
 					log.Printf("Offline SaveMessage %v %v On Scylla \n", msg, data)
-					m.scylladbRepository.SaveMessage(msg, data)
+					if err := m.scylladbRepository.SaveMessage(msg, data); err != nil {
+						log.Println("You Have Error In Save To ScyllaDB", err)
+					}
 				}
 
 			}
